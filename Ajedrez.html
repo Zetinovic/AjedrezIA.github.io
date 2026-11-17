@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Mini-Ajedrez: IA vs IA (Minimax vs Greedy)</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: #f4f4f6;
+      color: #1f2937;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 30px 20px;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    p { font-size: 0.9rem; color: #4b5563; margin-top: 0; margin-bottom: 20px; text-align: center; }
+    .container {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      justify-content: center;
+      background: #fff;
+      padding: 20px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+    }
+    table {
+      border-collapse: collapse;
+      border: 2px solid #374151;
+    }
+    td {
+      width: 56px;
+      height: 56px;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 2rem;
+      user-select: none;
+    }
+    .light { background-color: #e5e7eb; }
+    .dark { background-color: #9ca3af; }
+    .last-move { background-color: #fde047 !important; }
+    
+    .panel {
+      width: 260px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .controls { display: flex; gap: 8px; margin-bottom: 16px; }
+    button {
+      flex: 1;
+      padding: 10px;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    button.secondary { background: #4b5563; }
+    button.secondary:hover { background: #374151; }
+    
+    .stats {
+      font-family: monospace;
+      font-size: 0.85rem;
+      background: #f9fafb;
+      padding: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      line-height: 1.5;
+    }
+    .log {
+      margin-top: 12px;
+      height: 140px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.8rem;
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Mini-Ajedrez IA vs IA (5x6)</h1>
+  <p><strong>Blancas:</strong> Algoritmo Voraz (Profundidad 1) &nbsp;|&nbsp; <strong>Negras:</strong> Minimax + Poda Alfa-Beta (Profundidad 3)</p>
+
+  <div class="container">
+    <table id="board"></table>
+
+    <div class="panel">
+      <div>
+        <div class="controls">
+          <button id="btnStart" onclick="iniciarPartida()">Iniciar Batalla</button>
+          <button class="secondary" onclick="reiniciar()">Reiniciar</button>
+        </div>
+
+        <div class="stats" id="stats">
+          Estado: Esperando inicio<br>
+          Turno: Blancas<br>
+          Nodos evaluados: 0<br>
+          Tiempo cálculo: 0 ms
+        </div>
+      </div>
+
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const INITIAL_BOARD = [
+      ['r', 'n', 'b', 'q', 'k'],
+      ['p', 'p', 'p', 'p', 'p'],
+      ['.', '.', '.', '.', '.'],
+      ['.', '.', '.', '.', '.'],
+      ['P', 'P', 'P', 'P', 'P'],
+      ['R', 'N', 'B', 'Q', 'K']
+    ];
+
+    const SYMBOLS = {
+      'K': '♔', 'Q': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙',
+      'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟',
+      '.': ''
+    };
+
+    const PIECE_VALUES = {
+      'p': 10, 'n': 30, 'b': 30, 'r': 50, 'q': 90, 'k': 900,
+      'P': 10, 'N': 30, 'B': 30, 'R': 50, 'Q': 90, 'K': 900,
+      '.': 0
+    };
+
+    let board = [];
+    let isWhiteTurn = true;
+    let gameRunning = false;
+    let timer = null;
+    let lastMove = null;
+    let nodesEvaluated = 0;
+
+    function isWhite(piece) { return piece !== '.' && piece === piece.toUpperCase(); }
+    function isBlack(piece) { return piece !== '.' && piece === piece.toLowerCase(); }
+
+    function getAllMoves(currentBoard, whiteTurn) {
+      const moves = [];
+      for (let r = 0; r < 6; r++) {
+        for (let c = 0; c < 5; c++) {
+          const piece = currentBoard[r][c];
+          if (piece === '.') continue;
+          if (whiteTurn && !isWhite(piece)) continue;
+          if (!whiteTurn && !isBlack(piece)) continue;
+
+          const pieceMoves = getPieceMoves(currentBoard, r, c, piece);
+          moves.push(...pieceMoves);
+        }
+      }
+      return moves;
+    }
+
+    function getPieceMoves(b, r, c, piece) {
+      const moves = [];
+      const type = piece.toLowerCase();
+      const white = isWhite(piece);
+
+      const addIfValid = (nr, nc) => {
+        if (nr < 0 || nr >= 6 || nc < 0 || nc >= 5) return false;
+        const target = b[nr][nc];
+        if (target === '.') {
+          moves.push({ from: [r, c], to: [nr, nc], captured: '.' });
+          return true;
+        }
+        if ((white && isBlack(target)) || (!white && isWhite(target))) {
+          moves.push({ from: [r, c], to: [nr, nc], captured: target });
+        }
+        return false;
+      };
+
+      if (type === 'p') {
+        const dir = white ? -1 : 1;
+        if (r + dir >= 0 && r + dir < 6 && b[r + dir][c] === '.') {
+          moves.push({ from: [r, c], to: [r + dir, c], captured: '.' });
+        }
+        for (let dc of [-1, 1]) {
+          if (r + dir >= 0 && r + dir < 6 && c + dc >= 0 && c + dc < 5) {
+            const target = b[r + dir][c + dc];
+            if (target !== '.' && ((white && isBlack(target)) || (!white && isWhite(target)))) {
+              moves.push({ from: [r, c], to: [r + dir, c + dc], captured: target });
+            }
+          }
+        }
+      } else if (type === 'n') {
+        const jumps = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+        jumps.forEach(([dr, dc]) => addIfValid(r + dr, c + dc));
+      } else if (type === 'k') {
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr !== 0 || dc !== 0) addIfValid(r + dr, c + dc);
+          }
+        }
+      } else {
+        const dirs = [];
+        if (type === 'r' || type === 'q') dirs.push([-1,0],[1,0],[0,-1],[0,1]);
+        if (type === 'b' || type === 'q') dirs.push([-1,-1],[-1,1],[1,-1],[1,1]);
+        
+        for (let [dr, dc] of dirs) {
+          let step = 1;
+          while (addIfValid(r + dr * step, c + dc * step)) step++;
+        }
+      }
+      return moves;
+    }
+
+    function applyMove(b, move) {
+      const copy = b.map(row => [...row]);
+      const piece = copy[move.from[0]][move.from[1]];
+      copy[move.from[0]][move.from[1]] = '.';
+      
+      if (piece === 'P' && move.to[0] === 0) copy[move.to[0]][move.to[1]] = 'Q';
+      else if (piece === 'p' && move.to[0] === 5) copy[move.to[0]][move.to[1]] = 'q';
+      else copy[move.to[0]][move.to[1]] = piece;
+      
+      return copy;
+    }
+
+    function evaluateBoard(b) {
+      nodesEvaluated++;
+      let score = 0;
+      for (let r = 0; r < 6; r++) {
+        for (let c = 0; c < 5; c++) {
+          const p = b[r][c];
+          if (p === '.') continue;
+          const centerBonus = (c >= 1 && c <= 3 && r >= 2 && r <= 3) ? 2 : 0;
+          if (isBlack(p)) score += (PIECE_VALUES[p] + centerBonus);
+          else score -= (PIECE_VALUES[p] + centerBonus);
+        }
+      }
+      return score;
+    }
+
+    function getGreedyMove(b) {
+      const moves = getAllMoves(b, true);
+      if (moves.length === 0) return null;
+      
+      moves.sort(() => Math.random() - 0.5);
+      
+      let bestMove = moves[0];
+      let bestScore = Infinity;
+
+      for (let move of moves) {
+        const nextBoard = applyMove(b, move);
+        const score = evaluateBoard(nextBoard);
+        if (score < bestScore) {
+          bestScore = score;
+          bestMove = move;
+        }
+      }
+      return bestMove;
+    }
+
+    function minimax(b, depth, alpha, beta, maximizingBlack) {
+      if (depth === 0) return evaluateBoard(b);
+
+      const moves = getAllMoves(b, !maximizingBlack);
+      if (moves.length === 0) return evaluateBoard(b);
+
+      if (maximizingBlack) {
+        let maxEval = -Infinity;
+        for (let move of moves) {
+          const nextBoard = applyMove(b, move);
+          const ev = minimax(nextBoard, depth - 1, alpha, beta, false);
+          maxEval = Math.max(maxEval, ev);
+          alpha = Math.max(alpha, ev);
+          if (beta <= alpha) break;
+        }
+        return maxEval;
+      } else {
+        let minEval = Infinity;
+        for (let move of moves) {
+          const nextBoard = applyMove(b, move);
+          const ev = minimax(nextBoard, depth - 1, alpha, beta, true);
+          minEval = Math.min(minEval, ev);
+          beta = Math.min(beta, ev);
+          if (beta <= alpha) break;
+        }
+        return minEval;
+      }
+    }
+
+    function getMinimaxMove(b, depth) {
+      const moves = getAllMoves(b, false);
+      if (moves.length === 0) return null;
+      
+      moves.sort(() => Math.random() - 0.5);
+      let bestMove = moves[0];
+      let bestScore = -Infinity;
+
+      for (let move of moves) {
+        const nextBoard = applyMove(b, move);
+        const score = minimax(nextBoard, depth - 1, -Infinity, Infinity, false);
+        if (score > bestScore) {
+          bestScore = score;
+          bestMove = move;
+        }
+      }
+      return bestMove;
+    }
+
+    function renderBoard() {
+      const table = document.getElementById('board');
+      table.innerHTML = '';
+      for (let r = 0; r < 6; r++) {
+        const tr = document.createElement('tr');
+        for (let c = 0; c < 5; c++) {
+          const td = document.createElement('td');
+          td.className = (r + c) % 2 === 0 ? 'light' : 'dark';
+          if (lastMove && ((lastMove.from[0] === r && lastMove.from[1] === c) || (lastMove.to[0] === r && lastMove.to[1] === c))) {
+            td.classList.add('last-move');
+          }
+          td.textContent = SYMBOLS[board[r][c]];
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+      }
+    }
+
+    function logMsg(text) {
+      const logDiv = document.getElementById('log');
+      logDiv.innerHTML = `<div>${text}</div>` + logDiv.innerHTML;
+    }
+
+    function step() {
+      if (!gameRunning) return;
+
+      nodesEvaluated = 0;
+      const t0 = performance.now();
+      const move = isWhiteTurn ? getGreedyMove(board) : getMinimaxMove(board, 3);
+      const t1 = performance.now();
+
+      if (!move) {
+        terminarJuego(isWhiteTurn ? "Ganan Negras (Sin movimientos)" : "Ganan Blancas (Sin movimientos)");
+        return;
+      }
+
+      const pieceSymbol = SYMBOLS[board[move.from[0]][move.from[1]]];
+      board = applyMove(board, move);
+      lastMove = move;
+      renderBoard();
+
+      const actor = isWhiteTurn ? "Blancas (Voraz)" : "Negras (Minimax)";
+      const capText = move.captured !== '.' ? ` captura ${SYMBOLS[move.captured]}` : '';
+      logMsg(`${actor}: ${pieceSymbol} [${move.from}]→[${move.to}]${capText}`);
+
+      document.getElementById('stats').innerHTML = `
+        Estado: Jugando...<br>
+        Último turno: ${actor}<br>
+        Nodos evaluados: ${nodesEvaluated}<br>
+        Tiempo cálculo: ${(t1 - t0).toFixed(2)} ms
+      `;
+
+      if (move.captured === 'K') {
+        terminarJuego("¡Ganan las NEGRAS (Minimax)!");
+        return;
+      }
+      if (move.captured === 'k') {
+        terminarJuego("¡Ganan las BLANCAS (Voraz)!");
+        return;
+      }
+
+      isWhiteTurn = !isWhiteTurn;
+      timer = setTimeout(step, 500);
+    }
+
+    function iniciarPartida() {
+      if (gameRunning) return;
+      gameRunning = true;
+      document.getElementById('btnStart').disabled = true;
+      step();
+    }
+
+    function terminarJuego(mensaje) {
+      gameRunning = false;
+      clearTimeout(timer);
+      logMsg(`<strong>${mensaje}</strong>`);
+      document.getElementById('stats').innerHTML = `Estado: <strong>${mensaje}</strong>`;
+    }
+
+    function reiniciar() {
+      gameRunning = false;
+      clearTimeout(timer);
+      board = INITIAL_BOARD.map(row => [...row]);
+      isWhiteTurn = true;
+      lastMove = null;
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('log').innerHTML = '';
+      document.getElementById('stats').innerHTML = `
+        Estado: Listo<br>
+        Turno: Blancas<br>
+        Nodos evaluados: 0<br>
+        Tiempo cálculo: 0 ms
+      `;
+      renderBoard();
+    }
+
+    reiniciar();
+  </script>
+</body>
+</html>
